@@ -54,11 +54,22 @@ variable "environment_variables" {
 
 variable "vpc_config" {
   type = object({
-    subnet_ids         = list(string)
-    security_group_ids = list(string)
+    vpc_id             = optional(string)       # VPC id (either vpc_id or vpc_name is required)
+    vpc_name           = optional(string)       # VPC Name tag (alternative to vpc_id)
+    subnet_ids         = optional(list(string)) # explicit subnet ids (either subnet_ids or subnet_names is required)
+    subnet_names       = optional(list(string)) # subnet Name tags to look up in the VPC
+    security_group_ids = optional(list(string)) # existing SGs; if omitted the module creates one (all egress)
   })
-  description = "VPC configuration for the canary Lambda (required to reach internal/private endpoints). Leave null to run in the default Synthetics environment."
+  description = "VPC configuration for the canary Lambda (required to reach internal/private endpoints). Leave null to run in the default Synthetics environment. The module creates a security group when security_group_ids is omitted."
   default     = null
+
+  validation {
+    condition = var.vpc_config == null || (
+      (try(var.vpc_config.vpc_id, null) != null || try(var.vpc_config.vpc_name, null) != null) &&
+      (try(length(var.vpc_config.subnet_ids), 0) > 0 || try(length(var.vpc_config.subnet_names), 0) > 0)
+    )
+    error_message = "vpc_config requires vpc_id or vpc_name, and subnet_ids or subnet_names."
+  }
 }
 
 variable "runtime_version" {

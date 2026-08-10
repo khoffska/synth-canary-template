@@ -98,47 +98,37 @@ aws ssm put-parameter --name domino-api-key \
 ## Running inside a VPC (internal endpoints)
 
 Set `vpc_config` to place the canary Lambda in your VPC so it can reach an
-internal frontend/API (no public internet path):
+internal frontend/API (no public internet path). Just name the VPC and subnets
+(or pass ids directly) — the module looks them up and creates the security
+group for you:
 
 ```hcl
-# workspace pattern: AFT-provisioned VPC, looked up via SSM + subnet tags
-data "aws_ssm_parameter" "vpc_id" {
-  name = "/network/vpc_id"
-}
-
-data "aws_subnets" "private" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_ssm_parameter.vpc_id.value]
-  }
-  filter {
-    name   = "tag:Name"
-    values = ["aft-global-default-vpc-private"]
-  }
-}
-
-resource "aws_security_group" "canary" {
-  name   = "synth-canary-${var.canary_name}"
-  vpc_id = data.aws_ssm_parameter.vpc_id.value
-
-  egress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/8"]   # or reference the API's SG
-  }
-}
-
 module "canary" {
   source = "./modules/synthetic-canary"
-  name            = var.canary_name
-  sns_topic_email = var.sns_topic_email
+  name            = "internal-api-check"
+  sns_topic_email = "alerts@example.com"
 
   vpc_config = {
-    subnet_ids         = data.aws_subnets.private.ids
-    security_group_ids = [aws_security_group.canary.id]
+    vpc_name     = "aft-global-default-vpc"          # or vpc_id = "vpc-..."
+    subnet_names = ["aft-global-default-vpc-private"] # or subnet_ids = ["subnet-..."]
   }
 }
+```
+
+Resolution rules: `vpc_id` wins over `vpc_name` (matched on the `Name` tag);
+`subnet_ids` win over `subnet_names` (matched on the `Name` tag within the VPC).
+
+The security group: **yes, AWS requires one** — if you don't pass
+`security_group_ids`, the module creates `synth-canary-<name>` with all egress
+(within a private subnet that only reaches the VPC CIDR, NAT, and VPC endpoints
+per the route table anyway). For tighter control, pass existing SGs:
+
+```hcl
+  vpc_config = {
+    vpc_id             = "vpc-12345678"
+    subnet_ids         = ["subnet-abcdef12", "subnet-34567890"]
+    security_group_ids = [aws_security_group.api_client.id]   # your SG with scoped egress
+  }
 ```
 
 Gotchas:
@@ -149,9 +139,9 @@ Gotchas:
   `com.amazonaws.<region>.logs` + `com.amazonaws.<region>.xray` (interface
   endpoints). With a NAT gateway (workspace pattern: per-project NAT), nothing
   extra is needed.
-- **Security groups**: your canary SG needs egress to the API's listener
-  (usually 443 → API SG or CIDR), and the API/ALB SG needs ingress from the
-  canary SG. DNS resolution relies on the VPC's default DNS settings.
+- **Security groups**: with the module-created SG, the API/ALB SG still needs
+  ingress from `synth-canary-<name>` on the listener port. DNS resolution
+  relies on the VPC's default DNS settings.
 - The API's URL goes in `environment_variables` (or the domino `endpoint`);
   the canary just needs to be able to resolve + reach it from the private subnet.
 
@@ -164,7 +154,7 @@ Gotchas:
 | `source_file` | built-in per `type` | path to your canary `.py`; handler is derived from the filename |
 | `artifact_bucket_name` | auto-generated | pin a fixed bucket name |
 | `environment_variables` | `{}` | runtime env vars (e.g. API endpoint) |
-| `vpc_config` | `null` | `{ subnet_ids, security_group_ids }` — run the canary inside a VPC to reach internal endpoints |
+| `vpc_config` | `null` | `{ vpc_id/vpc_name, subnet_ids/subnet_names, security_group_ids? }` — run inside a VPC; SG auto-created if omitted |
 | `schedule_expression` | `rate(5 minutes)` | run cadence |
 | `runtime_version` | `syn-python-selenium-11.1` | Synthetics runtime |
 | `start_canary` / `delete_lambda` | `true` / `true` | lifecycle switches |
