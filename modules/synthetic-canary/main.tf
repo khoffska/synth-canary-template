@@ -21,10 +21,10 @@ resource "aws_synthetics_canary" "this" {
   start_canary = var.start_canary
 
   dynamic "vpc_config" {
-    for_each = var.vpc_config != null ? [var.vpc_config] : []
+    for_each = var.vpc_config != null ? [1] : []
     content {
-      subnet_ids         = vpc_config.value.subnet_ids
-      security_group_ids = vpc_config.value.security_group_ids
+      subnet_ids         = local.subnet_ids
+      security_group_ids = local.security_group_ids
     }
   }
 }
