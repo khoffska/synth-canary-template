@@ -28,13 +28,6 @@ variable "runtime_version" {
 
 variable "domino_secret_name" {
   type        = string
-  description = "Name of the Secrets Manager secret holding the Domino API key (created by secrets.tf when domino_api_key is set)."
+  description = "Name of the Secrets Manager secret holding the Domino API key (created by secrets.tf with a placeholder value)."
   default     = "domino-api-key"
-}
-
-variable "domino_api_key" {
-  type        = string
-  description = "Domino API key. Override in tfvars to have secrets.tf create the secret (wrapped as {\"apiKey\": \"...\"}). Leave empty to manage the secret out-of-band."
-  default     = ""
-  sensitive   = true
 }
