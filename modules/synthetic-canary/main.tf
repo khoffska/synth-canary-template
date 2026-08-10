@@ -12,9 +12,9 @@ resource "aws_synthetics_canary" "this" {
   }
 
   dynamic "run_config" {
-    for_each = length(var.environment_variables) > 0 ? [1] : []
+    for_each = length(local.environment_variables) > 0 ? [1] : []
     content {
-      environment_variables = var.environment_variables
+      environment_variables = local.environment_variables
     }
   }
 
