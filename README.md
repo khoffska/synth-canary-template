@@ -52,49 +52,47 @@ module "canary" {
     action     = "workspace"          # or "job"
     # run_command = "main.py"          # job only
     # cleanup = true                    # default: stops what it starts
-    api_key_secret_arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:domino-api-key-abc123"  # preferred
-    # api_key_secret_json_key = "apiKey"  # if the secret is JSON, set the key
-    # api_key = "..."                  # plaintext fallback — avoid for real secrets
+    api_key_ssm_name = "domino-api-key" # SSM SecureString parameter (preferred)
+    # api_key = "***"                  # plaintext fallback — avoid for real secrets
   }
 }
 ```
 
 Domino env vars are built automatically (`DOMINO_HOST`, `DOMINO_PROJECT_ID`, `DOMINO_ACTION`, …)
-and the IAM role gets scoped `secretsmanager:GetSecretValue` only when `api_key_secret_arn` is set.
+and the IAM role gets scoped `ssm:GetParameter` only when `api_key_ssm_name` is set.
 See `src/domino_canary.py` for the `DOMINO_*_PATH` overrides if your Domino version's API paths differ.
 
-## Creating the Domino API key secret
+## Creating the Domino API key parameter
 
 Three options:
 
-**A. Terraform (this template, starter)** — `secrets.tf` creates the secret with a
-dummy value (`{"apiKey": "foo bar"}`) so the whole chain works end to end.
-`ignore_changes` on the value means Terraform won't revert out-of-band updates:
+**A. Terraform (this template, starter)** — `secrets.tf` creates an SSM
+Parameter Store `SecureString` with a dummy value (`"foo bar"`) so the whole
+chain works end to end. `ignore_changes` on the value means Terraform won't
+revert out-of-band updates:
 
 ```hcl
-# main.tf — wire the ARN straight from the resource
-api_key_secret_arn      = aws_secretsmanager_secret.domino_api_key.arn
-api_key_secret_json_key = "apiKey"
+# main.tf — wire the parameter name straight from the resource
+api_key_ssm_name = aws_ssm_parameter.domino_api_key.name
 ```
 
-Then put the real key in place (console → Retrieve secret value, or the
-create-secret workflow below) — Terraform will leave it alone on the next apply.
+Then put the real key in place (console → Systems Manager → Parameter Store, or
+the create-secret workflow below) — Terraform will leave it alone on the next apply.
 
 **B. One-off workflow** — `create-secret.yml` (workflow_dispatch) creates or
-updates the secret from the `DOMINO_API_KEY` repo secret:
+updates the parameter from the `DOMINO_API_KEY` repo secret:
 
 ```bash
 gh secret set DOMINO_API_KEY
-gh workflow run create-secret.yml -f secret_name=domino-api-key -f secret_json_key=apiKey
-# ARN prints in the run log
+gh workflow run create-secret.yml -f parameter_name=domino-api-key
 ```
 
 **C. AWS CLI** (anywhere with creds):
 
 ```bash
-aws secretsmanager create-secret --name domino-api-key \
-  --secret-string '{"apiKey":"***"}' --region us-east-1 \
-  --query ARN --output text
+aws ssm put-parameter --name domino-api-key \
+  --value "your-domino-api-key" \
+  --type SecureString --region us-east-1 --overwrite
 ```
 
 ## Optional module vars

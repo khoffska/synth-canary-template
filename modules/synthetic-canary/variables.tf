@@ -27,15 +27,14 @@ variable "type" {
 
 variable "domino" {
   type = object({
-    endpoint                = string                  # required: Domino host base URL, e.g. https://domino.example.com
-    project_id              = string                  # required: target Domino project id
-    action                  = optional(string, "job") # "job" | "workspace"
-    run_command             = optional(string)        # job run command (default "main.py")
-    cleanup                 = optional(bool, true)    # stop what we started so no paid compute is left running
-    max_latency_ms          = optional(number)        # fail if start request exceeds this
-    api_key_secret_arn      = optional(string)        # Secrets Manager secret id/ARN (preferred)
-    api_key_secret_json_key = optional(string)        # if the secret is JSON, the key holding the api key
-    api_key                 = optional(string)        # plaintext fallback — avoid for real secrets
+    endpoint         = string                  # required: Domino host base URL, e.g. https://domino.example.com
+    project_id       = string                  # required: target Domino project id
+    action           = optional(string, "job") # "job" | "workspace"
+    run_command      = optional(string)        # job run command (default "main.py")
+    cleanup          = optional(bool, true)    # stop what we started so no paid compute is left running
+    max_latency_ms   = optional(number)        # fail if start request exceeds this
+    api_key_ssm_name = optional(string)        # SSM Parameter Store parameter name (SecureString, preferred)
+    api_key          = optional(string)        # plaintext fallback — avoid for real secrets
   })
   description = "Domino Data Lab monitoring config. Required when type = \"domino\"."
   default     = null

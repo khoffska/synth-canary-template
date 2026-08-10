@@ -26,8 +26,8 @@ variable "runtime_version" {
   default     = "syn-python-selenium-11.1"
 }
 
-variable "domino_secret_name" {
+variable "domino_parameter_name" {
   type        = string
-  description = "Name of the Secrets Manager secret holding the Domino API key (created by secrets.tf with a placeholder value)."
+  description = "Name of the SSM Parameter Store parameter holding the Domino API key (created by secrets.tf with a placeholder value)."
   default     = "domino-api-key"
 }
