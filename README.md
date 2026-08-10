@@ -95,6 +95,66 @@ aws ssm put-parameter --name domino-api-key \
   --type SecureString --region us-east-1 --overwrite
 ```
 
+## Running inside a VPC (internal endpoints)
+
+Set `vpc_config` to place the canary Lambda in your VPC so it can reach an
+internal frontend/API (no public internet path):
+
+```hcl
+# workspace pattern: AFT-provisioned VPC, looked up via SSM + subnet tags
+data "aws_ssm_parameter" "vpc_id" {
+  name = "/network/vpc_id"
+}
+
+data "aws_subnets" "private" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_ssm_parameter.vpc_id.value]
+  }
+  filter {
+    name   = "tag:Name"
+    values = ["aft-global-default-vpc-private"]
+  }
+}
+
+resource "aws_security_group" "canary" {
+  name   = "synth-canary-${var.canary_name}"
+  vpc_id = data.aws_ssm_parameter.vpc_id.value
+
+  egress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["10.0.0.0/8"]   # or reference the API's SG
+  }
+}
+
+module "canary" {
+  source = "./modules/synthetic-canary"
+  name            = var.canary_name
+  sns_topic_email = var.sns_topic_email
+
+  vpc_config = {
+    subnet_ids         = data.aws_subnets.private.ids
+    security_group_ids = [aws_security_group.canary.id]
+  }
+}
+```
+
+Gotchas:
+
+- **Egress for AWS services**: the canary still writes artifacts to S3, logs to
+  CloudWatch, and traces to X-Ray. In private subnets without a NAT gateway you
+  must add VPC endpoints: S3 (gateway endpoint + route table entry), and
+  `com.amazonaws.<region>.logs` + `com.amazonaws.<region>.xray` (interface
+  endpoints). With a NAT gateway (workspace pattern: per-project NAT), nothing
+  extra is needed.
+- **Security groups**: your canary SG needs egress to the API's listener
+  (usually 443 → API SG or CIDR), and the API/ALB SG needs ingress from the
+  canary SG. DNS resolution relies on the VPC's default DNS settings.
+- The API's URL goes in `environment_variables` (or the domino `endpoint`);
+  the canary just needs to be able to resolve + reach it from the private subnet.
+
 ## Optional module vars
 
 | var | default | purpose |
@@ -104,6 +164,7 @@ aws ssm put-parameter --name domino-api-key \
 | `source_file` | built-in per `type` | path to your canary `.py`; handler is derived from the filename |
 | `artifact_bucket_name` | auto-generated | pin a fixed bucket name |
 | `environment_variables` | `{}` | runtime env vars (e.g. API endpoint) |
+| `vpc_config` | `null` | `{ subnet_ids, security_group_ids }` — run the canary inside a VPC to reach internal endpoints |
 | `schedule_expression` | `rate(5 minutes)` | run cadence |
 | `runtime_version` | `syn-python-selenium-11.1` | Synthetics runtime |
 | `start_canary` / `delete_lambda` | `true` / `true` | lifecycle switches |

@@ -52,6 +52,15 @@ variable "environment_variables" {
   default     = {}
 }
 
+variable "vpc_config" {
+  type = object({
+    subnet_ids         = list(string)
+    security_group_ids = list(string)
+  })
+  description = "VPC configuration for the canary Lambda (required to reach internal/private endpoints). Leave null to run in the default Synthetics environment."
+  default     = null
+}
+
 variable "runtime_version" {
   type        = string
   description = "Synthetics runtime version."
