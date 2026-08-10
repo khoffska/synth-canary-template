@@ -63,6 +63,40 @@ Domino env vars are built automatically (`DOMINO_HOST`, `DOMINO_PROJECT_ID`, `DO
 and the IAM role gets scoped `secretsmanager:GetSecretValue` only when `api_key_secret_arn` is set.
 See `src/domino_canary.py` for the `DOMINO_*_PATH` overrides if your Domino version's API paths differ.
 
+## Creating the Domino API key secret
+
+Three options:
+
+**A. Terraform (this template)** — set `domino_api_key` in your `terraform.tfvars`
+(never commit the key) and `secrets.tf` creates the secret for you, wrapped as
+`{"apiKey": "..."}`, so also set `api_key_secret_json_key = "apiKey"`:
+
+```hcl
+# terraform.tfvars
+domino_api_key = "your-domino-api-key"
+
+# main.tf — wire the ARN straight from the resource
+api_key_secret_arn      = aws_secretsmanager_secret.domino_api_key[0].arn
+api_key_secret_json_key = "apiKey"
+```
+
+**B. One-off workflow** — `create-secret.yml` (workflow_dispatch) creates or
+updates the secret from the `DOMINO_API_KEY` repo secret:
+
+```bash
+gh secret set DOMINO_API_KEY
+gh workflow run create-secret.yml -f secret_name=domino-api-key -f secret_json_key=apiKey
+# ARN prints in the run log
+```
+
+**C. AWS CLI** (anywhere with creds):
+
+```bash
+aws secretsmanager create-secret --name domino-api-key \
+  --secret-string '{"apiKey":"***"}' --region us-east-1 \
+  --query ARN --output text
+```
+
 ## Optional module vars
 
 | var | default | purpose |
