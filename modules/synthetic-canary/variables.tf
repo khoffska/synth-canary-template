@@ -10,7 +10,34 @@ variable "sns_topic_email" {
 
 variable "source_file" {
   type        = string
-  description = "Path to the canary source .py. The handler is derived from the filename (<stem>.handler). Leave null to use the example canary shipped inside the module."
+  description = "Path to the canary source .py. The handler is derived from the filename (<stem>.handler). Leave null to use the example canary shipped inside the module (my-canary.py for type=browser, domino_canary.py for type=domino)."
+  default     = null
+}
+
+variable "type" {
+  type        = string
+  description = "Canary type: \"browser\" (default, uses src/my-canary.py) or \"domino\" (uses src/domino_canary.py + the domino{} config)."
+  default     = "browser"
+
+  validation {
+    condition     = contains(["browser", "domino"], var.type)
+    error_message = "type must be \"browser\" or \"domino\"."
+  }
+}
+
+variable "domino" {
+  type = object({
+    endpoint                = string                  # required: Domino host base URL, e.g. https://domino.example.com
+    project_id              = string                  # required: target Domino project id
+    action                  = optional(string, "job") # "job" | "workspace"
+    run_command             = optional(string)        # job run command (default "main.py")
+    cleanup                 = optional(bool, true)    # stop what we started so no paid compute is left running
+    max_latency_ms          = optional(number)        # fail if start request exceeds this
+    api_key_secret_arn      = optional(string)        # Secrets Manager secret id/ARN (preferred)
+    api_key_secret_json_key = optional(string)        # if the secret is JSON, the key holding the api key
+    api_key                 = optional(string)        # plaintext fallback — avoid for real secrets
+  })
+  description = "Domino Data Lab monitoring config. Required when type = \"domino\"."
   default     = null
 }
 

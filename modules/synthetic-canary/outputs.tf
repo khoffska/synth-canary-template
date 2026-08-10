@@ -27,3 +27,8 @@ output "execution_role_arn" {
   description = "ARN of the canary execution role."
   value       = aws_iam_role.canary.arn
 }
+
+output "environment_variables" {
+  description = "Environment variables passed to the canary at runtime (derived + manual)."
+  value       = local.environment_variables
+}
