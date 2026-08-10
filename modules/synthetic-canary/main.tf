@@ -19,6 +19,14 @@ resource "aws_synthetics_canary" "this" {
   }
 
   start_canary = var.start_canary
+
+  dynamic "vpc_config" {
+    for_each = var.vpc_config != null ? [var.vpc_config] : []
+    content {
+      subnet_ids         = vpc_config.value.subnet_ids
+      security_group_ids = vpc_config.value.security_group_ids
+    }
+  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "this" {
