@@ -16,9 +16,8 @@ from aws_synthetics.common import synthetics_logger as logger
 #   DOMINO_HOST            (required) base URL, e.g. https://domino.example.com
 #   DOMINO_PROJECT_ID      (required) target project id
 #   The API key (X-Domino-Api-Key) is resolved from, in order of preference:
-#     DOMINO_API_KEY_SECRET_ID        Secrets Manager secret id/ARN to read at runtime (preferred)
-#     DOMINO_API_KEY_SECRET_JSON_KEY  if the secret is JSON, the key holding the api key
-#     DOMINO_API_KEY                  plaintext fallback (avoid for real secrets)
+#     DOMINO_API_KEY_SSM_NAME   SSM Parameter Store parameter name to read at runtime (preferred)
+#     DOMINO_API_KEY            plaintext fallback (avoid for real secrets)
 #   DOMINO_ACTION          "job" | "workspace"  (default "job")
 #   DOMINO_RUN_COMMAND     job run command       (default "main.py")
 #   DOMINO_CLEANUP         "true" | "false" -- stop what we started (default "true")
@@ -36,18 +35,15 @@ DEFAULT_PATHS = {
 
 
 def _resolve_api_key():
-    """Prefer a Secrets Manager secret; fall back to a plaintext env var."""
-    secret_id = os.environ.get("DOMINO_API_KEY_SECRET_ID")
-    if not secret_id:
+    """Prefer an SSM Parameter Store SecureString; fall back to a plaintext env var."""
+    param_name = os.environ.get("DOMINO_API_KEY_SSM_NAME")
+    if not param_name:
         return os.environ.get("DOMINO_API_KEY")
 
     region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-    secret = boto3.client("secretsmanager", region_name=region).get_secret_value(
-        SecretId=secret_id
-    )["SecretString"]
-
-    json_key = os.environ.get("DOMINO_API_KEY_SECRET_JSON_KEY")
-    return json.loads(secret)[json_key] if json_key else secret
+    return boto3.client("ssm", region_name=region).get_parameter(
+        Name=param_name, WithDecryption=True
+    )["Parameter"]["Value"]
 
 
 def _request(http, method, url, headers, body):

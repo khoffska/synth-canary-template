@@ -23,9 +23,8 @@ locals {
       DOMINO_PROJECT_ID = var.domino.project_id
       DOMINO_ACTION     = coalesce(var.domino.action, "job")
     },
-    # Prefer the Secrets Manager path; only fall back to plaintext if no secret ARN is set.
-    var.domino.api_key_secret_arn != null ? { DOMINO_API_KEY_SECRET_ID = var.domino.api_key_secret_arn } : (var.domino.api_key == null ? {} : { DOMINO_API_KEY = var.domino.api_key }),
-    var.domino.api_key_secret_json_key == null ? {} : { DOMINO_API_KEY_SECRET_JSON_KEY = var.domino.api_key_secret_json_key },
+    # Prefer the SSM Parameter Store path; only fall back to plaintext if no parameter is set.
+    var.domino.api_key_ssm_name != null ? { DOMINO_API_KEY_SSM_NAME = var.domino.api_key_ssm_name } : (var.domino.api_key == null ? {} : { DOMINO_API_KEY = var.domino.api_key }),
     var.domino.run_command == null ? {} : { DOMINO_RUN_COMMAND = var.domino.run_command },
     var.domino.cleanup == null ? {} : { DOMINO_CLEANUP = tostring(var.domino.cleanup) },
     var.domino.max_latency_ms == null ? {} : { DOMINO_MAX_LATENCY_MS = tostring(var.domino.max_latency_ms) },
@@ -34,7 +33,7 @@ locals {
   # Manual environment_variables win over anything the module derived.
   environment_variables = merge(local.domino_env, var.environment_variables)
 
-  domino_secret_arns = var.domino != null && var.domino.api_key_secret_arn != null ? [var.domino.api_key_secret_arn] : []
+  domino_ssm_names = var.domino != null && var.domino.api_key_ssm_name != null ? [var.domino.api_key_ssm_name] : []
 }
 
 data "archive_file" "canary" {

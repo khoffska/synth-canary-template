@@ -3,8 +3,8 @@
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": ["secretsmanager:GetSecretValue"],
-      "Resource": ${secret_arns}
+      "Action": ["ssm:GetParameter"],
+      "Resource": ${parameter_arns}
     }
   ]
 }
