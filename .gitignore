@@ -1,0 +1,8 @@
+*.tfstate
+*.tfstate.backup
+.terraform
+.terraform.lock.hcl
+terraform.tfvars
+
+# Canary deployment zips are built by the module's data.archive_file — not committed
+modules/synthetic-canary/build/
