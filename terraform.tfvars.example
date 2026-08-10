@@ -2,5 +2,4 @@ canary_name      = "my-canary"
 sns_topic_email  = "alerts@example.com"
 # schedule_expression = "rate(5 minutes)"   # optional, has a default
 # runtime_version     = "syn-python-selenium-11.1"  # optional, has a default
-# domino_api_key      = "your-domino-api-key"  # set to have secrets.tf create the secret
 # domino_secret_name  = "domino-api-key"      # optional, has a default

@@ -1,19 +1,19 @@
-# Optional: create the Domino API key secret in Secrets Manager from Terraform.
+# Domino API key secret — starter version.
 #
-# Enabled by setting domino_api_key in your tfvars (NOT in a committed file).
-# The value is wrapped in JSON under the "apiKey" key, so pair it with
-# api_key_secret_json_key = "apiKey" in the domino{} block.
-#
-# count = 0 when domino_api_key is empty (the default) — nothing is created,
-# and you can create the secret out-of-band (console / create-secret workflow).
+# Creates the secret with a dummy value so the plumbing (IAM read policy,
+# canary env var, ARN reference) works end to end. The real key is set
+# out-of-band (console or the create-secret workflow) via put-secret-value —
+# ignore_changes stops Terraform from reverting it on the next apply.
 
 resource "aws_secretsmanager_secret" "domino_api_key" {
-  count = var.domino_api_key != "" ? 1 : 0
-  name  = var.domino_secret_name
+  name = var.domino_secret_name
 }
 
 resource "aws_secretsmanager_secret_version" "domino_api_key" {
-  count         = var.domino_api_key != "" ? 1 : 0
-  secret_id     = aws_secretsmanager_secret.domino_api_key[0].id
-  secret_string = jsonencode({ apiKey = var.domino_api_key })
+  secret_id     = aws_secretsmanager_secret.domino_api_key.id
+  secret_string = jsonencode({ apiKey = "foo bar" }) # placeholder — replace out-of-band
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
 }

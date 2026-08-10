@@ -67,18 +67,18 @@ See `src/domino_canary.py` for the `DOMINO_*_PATH` overrides if your Domino vers
 
 Three options:
 
-**A. Terraform (this template)** — set `domino_api_key` in your `terraform.tfvars`
-(never commit the key) and `secrets.tf` creates the secret for you, wrapped as
-`{"apiKey": "..."}`, so also set `api_key_secret_json_key = "apiKey"`:
+**A. Terraform (this template, starter)** — `secrets.tf` creates the secret with a
+dummy value (`{"apiKey": "foo bar"}`) so the whole chain works end to end.
+`ignore_changes` on the value means Terraform won't revert out-of-band updates:
 
 ```hcl
-# terraform.tfvars
-domino_api_key = "your-domino-api-key"
-
 # main.tf — wire the ARN straight from the resource
-api_key_secret_arn      = aws_secretsmanager_secret.domino_api_key[0].arn
+api_key_secret_arn      = aws_secretsmanager_secret.domino_api_key.arn
 api_key_secret_json_key = "apiKey"
 ```
+
+Then put the real key in place (console → Retrieve secret value, or the
+create-secret workflow below) — Terraform will leave it alone on the next apply.
 
 **B. One-off workflow** — `create-secret.yml` (workflow_dispatch) creates or
 updates the secret from the `DOMINO_API_KEY` repo secret:
