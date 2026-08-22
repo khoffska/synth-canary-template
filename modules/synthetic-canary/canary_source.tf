@@ -23,6 +23,7 @@ locals {
       DOMINO_PROJECT_ID = var.domino.project_id
       DOMINO_ACTION     = coalesce(var.domino.action, "job")
     },
+    var.domino.workspace_id != null ? { DOMINO_WORKSPACE_ID = var.domino.workspace_id } : {},
     # Prefer the SSM Parameter Store path; only fall back to plaintext if no parameter is set.
     var.domino.api_key_ssm_name != null ? { DOMINO_API_KEY_SSM_NAME = var.domino.api_key_ssm_name } : (var.domino.api_key == null ? {} : { DOMINO_API_KEY = var.domino.api_key }),
     var.domino.run_command == null ? {} : { DOMINO_RUN_COMMAND = var.domino.run_command },

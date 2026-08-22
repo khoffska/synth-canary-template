@@ -15,6 +15,7 @@ resource "aws_synthetics_canary" "this" {
     for_each = length(local.environment_variables) > 0 ? [1] : []
     content {
       environment_variables = local.environment_variables
+      timeout_in_seconds    = var.timeout_in_seconds
     }
   }
 

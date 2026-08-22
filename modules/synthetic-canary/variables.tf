@@ -29,6 +29,7 @@ variable "domino" {
   type = object({
     endpoint         = string                  # required: Domino host base URL, e.g. https://domino.example.com
     project_id       = string                  # required: target Domino project id
+    workspace_id     = optional(string)        # required when action = "workspace" — target workspace id
     action           = optional(string, "job") # "job" | "workspace"
     run_command      = optional(string)        # job run command (default "main.py")
     cleanup          = optional(bool, true)    # stop what we started so no paid compute is left running
@@ -94,6 +95,12 @@ variable "delete_lambda" {
   type        = bool
   description = "Whether to delete the underlying Lambda when the canary is destroyed."
   default     = true
+}
+
+variable "timeout_in_seconds" {
+  type        = number
+  description = "Canary execution timeout in seconds. Must exceed the workspace poll timeout (DOMINO_WORKSPACE_POLL_TIMEOUT_SECONDS, default 240) plus start time, or the Lambda is killed mid-poll."
+  default     = 600
 }
 
 variable "alarm_comparison_operator" {
