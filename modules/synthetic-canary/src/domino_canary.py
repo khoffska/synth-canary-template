@@ -11,10 +11,14 @@ from aws_synthetics.common import synthetics_logger as logger
 # Domino Data Lab API canary.
 #
 # DEBUG BUILD (2026-08-22): logs env presence (names only, never secret
-# values), SSM resolution, request timing, and full tracebacks. The raw
-# socket.getaddrinfo DNS check was REMOVED - the Synthetics runtime throws
-# OSError [Errno 16] Device or resource busy on direct socket DNS calls;
-# urllib3 resolves DNS internally within REQUEST_TIMEOUT instead.
+# values), SSM resolution, request timing, and full tracebacks.
+#
+# Workspace sessions use Domino's v1 projects API:
+#   POST /api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions
+# Jobs use the v4 API:
+#   POST /v4/jobs/start  |  POST /v4/jobs/stop
+# Paths can be overridden via DOMINO_*_START_PATH / DOMINO_*_STOP_PATH;
+# {projectId}, {workspaceId} and {sessionId} placeholders are substituted.
 
 # Hard request timeouts so a stalled connection fails fast with a real error
 # instead of hanging until the Lambda timeout kills the canary mid-run.
@@ -23,14 +27,23 @@ REQUEST_TIMEOUT = urllib3.Timeout(connect=5, read=15)
 BOTO_TIMEOUT = botocore.config.Config(connect_timeout=5, read_timeout=5)
 
 DEFAULT_PATHS = {
-    "job": {"start": "/v4/jobs/start", "stop": "/v4/jobs/stop"},
-    "workspace": {"start": "/v4/workspaces", "stop": "/v4/workspaces/stop"},
+    "job": {
+        "start": "/v4/jobs/start",
+        "stop": "/v4/jobs/stop",
+        "stop_method": "POST",
+    },
+    "workspace": {
+        "start": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions",
+        "stop": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions/{sessionId}",
+        "stop_method": "DELETE",
+    },
 }
 
 # Env vars the canary reads - we log which are SET (never their values).
 ENV_CHECKS = [
     "DOMINO_HOST",
     "DOMINO_PROJECT_ID",
+    "DOMINO_WORKSPACE_ID",
     "DOMINO_API_KEY_SSM_NAME",
     "DOMINO_API_KEY",
     "DOMINO_API_KEY_SECRET_ID",
@@ -77,6 +90,14 @@ def _resolve_api_key():
         raise
 
 
+def _render_path(path, project_id, workspace_id, session_id=None):
+    """Substitute {projectId}, {workspaceId}, {sessionId} placeholders."""
+    return (path
+            .replace("{projectId}", project_id)
+            .replace("{workspaceId}", workspace_id or "")
+            .replace("{sessionId}", session_id or ""))
+
+
 def _request(http, method, url, headers, body):
     logger.info(f"[DEBUG] _request: {method} {url} (timeout={REQUEST_TIMEOUT})")
     start = time.monotonic()
@@ -101,17 +122,17 @@ def _extract_id(resp):
         return None
     if not isinstance(data, dict):
         return None
-    for key in ("id", "jobId", "runId", "workspaceId"):
+    for key in ("id", "sessionId", "jobId", "runId", "workspaceId"):
         if data.get(key):
             return data[key]
     return None
 
 
-def _cleanup(http, url, headers, action, project_id, started_id):
-    id_field = "jobId" if action == "job" else "workspaceId"
+def _cleanup(http, method, url, headers, action, project_id, workspace_id, started_id):
+    id_field = "jobId" if action == "job" else "sessionId"
     body = {"projectId": project_id, id_field: started_id}
     try:
-        resp, _ = _request(http, "POST", url, headers, body)
+        resp, _ = _request(http, method, url, headers, body)
         logger.info(f"Cleanup stop response: {resp.status}")
     except Exception as e:  # cleanup must never mask an otherwise-successful check
         logger.info(f"Cleanup stop failed (non-fatal): {e}")
@@ -122,7 +143,10 @@ def main():
 
     host = os.environ.get("DOMINO_HOST")
     project_id = os.environ.get("DOMINO_PROJECT_ID")
-    logger.info(f"[DEBUG] main: DOMINO_HOST={'<set>' if host else '<MISSING>'}, DOMINO_PROJECT_ID={'<set>' if project_id else '<MISSING>'}")
+    workspace_id = os.environ.get("DOMINO_WORKSPACE_ID")
+    logger.info(f"[DEBUG] main: DOMINO_HOST={'<set>' if host else '<MISSING>'}, "
+                f"DOMINO_PROJECT_ID={'<set>' if project_id else '<MISSING>'}, "
+                f"DOMINO_WORKSPACE_ID={'<set>' if workspace_id else '<MISSING>'}")
 
     api_key = _resolve_api_key()
     if not host or not api_key or not project_id:
@@ -134,20 +158,26 @@ def main():
     action = os.environ.get("DOMINO_ACTION", "job")
     if action not in DEFAULT_PATHS:
         raise Exception(f'DOMINO_ACTION must be "job" or "workspace", got "{action}"')
+    if action == "workspace" and not workspace_id:
+        raise Exception("DOMINO_WORKSPACE_ID must be set when DOMINO_ACTION=workspace")
 
     host = host.rstrip("/")
     headers = {"X-Domino-Api-Key": api_key, "Content-Type": "application/json"}
     http = urllib3.PoolManager()
 
     prefix = f"DOMINO_{action.upper()}"
-    start_url = host + os.environ.get(f"{prefix}_START_PATH", DEFAULT_PATHS[action]["start"])
-    stop_url = host + os.environ.get(f"{prefix}_STOP_PATH", DEFAULT_PATHS[action]["stop"])
+    start_path = os.environ.get(f"{prefix}_START_PATH", DEFAULT_PATHS[action]["start"])
+    stop_path = os.environ.get(f"{prefix}_STOP_PATH", DEFAULT_PATHS[action]["stop"])
+    stop_method = os.environ.get(f"{prefix}_STOP_METHOD", DEFAULT_PATHS[action]["stop_method"])
+
+    start_url = host + _render_path(start_path, project_id, workspace_id)
+    stop_url = host + _render_path(stop_path, project_id, workspace_id)
 
     start_body = {"projectId": project_id}
     if action == "job":
         start_body["runCommand"] = os.environ.get("DOMINO_RUN_COMMAND", "main.py")
 
-    logger.info(f"[DEBUG] main: action={action}, start_url={start_url}, stop_url={stop_url}")
+    logger.info(f"[DEBUG] main: action={action}, start_url={start_url}, stop_url={stop_url} (stop_method={stop_method})")
 
     logger.info(f"Starting Domino {action} in project {project_id}")
     resp, latency_ms = _request(http, "POST", start_url, headers, start_body)
@@ -169,7 +199,8 @@ def main():
     logger.info(f"Domino {action} started with id: {started_id}")
 
     if os.environ.get("DOMINO_CLEANUP", "true").lower() == "true" and started_id:
-        _cleanup(http, stop_url, headers, action, project_id, started_id)
+        stop_url_final = host + _render_path(stop_path, project_id, workspace_id, started_id)
+        _cleanup(http, stop_method, stop_url_final, headers, action, project_id, workspace_id, started_id)
 
     logger.info("Domino canary successfully executed.")
 
