@@ -173,8 +173,21 @@ def main():
     start_url = host + _render_path(start_path, project_id, workspace_id)
     stop_url = host + _render_path(stop_path, project_id, workspace_id)
 
-    start_body = {"projectId": project_id}
-    if action == "job":
+    # Request bodies:
+    # - job:       {projectId, runCommand}  (v4 API)
+    # - workspace: {externalVolumeMounts, netAppVolumeMounts}  (v1 sessions API -
+    #   projectId lives in the path, and the API rejects a body missing the
+    #   mount fields with "error.path.missing"). Override via
+    #   DOMINO_WORKSPACE_START_BODY (JSON string) if your deployment needs
+    #   specific mounts.
+    if action == "workspace":
+        override = os.environ.get("DOMINO_WORKSPACE_START_BODY")
+        start_body = json.loads(override) if override else {
+            "externalVolumeMounts": [],
+            "netAppVolumeMounts": [],
+        }
+    else:
+        start_body = {"projectId": project_id}
         start_body["runCommand"] = os.environ.get("DOMINO_RUN_COMMAND", "main.py")
 
     logger.info(f"[DEBUG] main: action={action}, start_url={start_url}, stop_url={stop_url} (stop_method={stop_method})")
