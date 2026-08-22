@@ -40,7 +40,7 @@ DEFAULT_PATHS = {
     },
     "workspace": {
         "start": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions",
-        "status": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions/{sessionId}",
+        "status": "/v4/workspace/project/{projectId}/workspace/{workspaceId}",
         "stop": "/workspace/project/{projectId}/workspace/{workspaceId}/stop",
         "stop_method": "POST",
     },
