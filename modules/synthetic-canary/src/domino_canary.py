@@ -135,15 +135,31 @@ def _request(http, method, url, headers, body):
 
 
 def _extract_id(resp):
+    """Pull a session/job id from the start response.
+
+    Handles both flat responses (top-level id/sessionId/...) and nested ones
+    like Domino's workspace session start:
+      {"metadata": {...}, "workspaceSession": {"executionId": "...", "id": "..."}}
+    Checks top-level keys first, then common nested containers.
+    """
     try:
         data = json.loads(resp.data.decode("utf-8", errors="replace"))
     except (ValueError, AttributeError):
         return None
     if not isinstance(data, dict):
         return None
-    for key in ("id", "sessionId", "jobId", "runId", "workspaceId"):
+
+    for key in ("id", "sessionId", "jobId", "runId", "workspaceId", "executionId"):
         if data.get(key):
             return data[key]
+
+    # Nested containers seen in real Domino responses.
+    for container in ("workspaceSession", "session", "data", "result", "job", "run"):
+        inner = data.get(container)
+        if isinstance(inner, dict):
+            for key in ("id", "sessionId", "jobId", "runId", "workspaceId", "executionId"):
+                if inner.get(key):
+                    return inner[key]
     return None
 
 
