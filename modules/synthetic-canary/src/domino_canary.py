@@ -14,11 +14,17 @@ from aws_synthetics.common import synthetics_logger as logger
 # values), SSM resolution, request timing, and full tracebacks.
 #
 # Workspace sessions use Domino's v1 projects API:
-#   POST /api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions
+#   POST   /api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions
+#   GET    .../sessions/{sessionId}        (status poll)
+#   DELETE .../sessions/{sessionId}        (stop)
 # Jobs use the v4 API:
 #   POST /v4/jobs/start  |  POST /v4/jobs/stop
-# Paths can be overridden via DOMINO_*_START_PATH / DOMINO_*_STOP_PATH;
-# {projectId}, {workspaceId} and {sessionId} placeholders are substituted.
+#
+# Behaviour: start the workspace session, POLL until it reaches a Running
+# state (so we know it actually started), then stop it - leaving the next
+# scheduled run free to start a fresh session. Paths can be overridden via
+# DOMINO_*_START_PATH / _STATUS_PATH / _STOP_PATH / _STOP_METHOD; {projectId},
+# {workspaceId} and {sessionId} placeholders are substituted.
 
 # Hard request timeouts so a stalled connection fails fast with a real error
 # instead of hanging until the Lambda timeout kills the canary mid-run.
@@ -34,10 +40,19 @@ DEFAULT_PATHS = {
     },
     "workspace": {
         "start": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions",
+        "status": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions/{sessionId}",
         "stop": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions/{sessionId}",
         "stop_method": "DELETE",
     },
 }
+
+# Statuses we treat as "the workspace is successfully up". Domino workspace
+# sessions report these (case-insensitive). Override via
+# DOMINO_WORKSPACE_READY_STATUSES (comma-separated).
+DEFAULT_READY_STATUSES = ("running", "started", "ready", "active")
+
+# Terminal failure statuses - if the session lands here before Running, fail.
+FAILED_STATUSES = ("failed", "error", "terminated", "stopped", "cancelled", "canceled")
 
 # Env vars the canary reads - we log which are SET (never their values).
 ENV_CHECKS = [
@@ -51,6 +66,10 @@ ENV_CHECKS = [
     "DOMINO_RUN_COMMAND",
     "DOMINO_CLEANUP",
     "DOMINO_MAX_LATENCY_MS",
+    "DOMINO_WORKSPACE_POLL_INTERVAL_SECONDS",
+    "DOMINO_WORKSPACE_POLL_TIMEOUT_SECONDS",
+    "DOMINO_WORKSPACE_READY_STATUSES",
+    "DOMINO_WORKSPACE_START_BODY",
 ]
 
 
@@ -128,6 +147,59 @@ def _extract_id(resp):
     return None
 
 
+def _get_status(resp):
+    """Pull a status string out of a session/job detail response."""
+    try:
+        data = json.loads(resp.data.decode("utf-8", errors="replace"))
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for key in ("status", "state", "lifecycleState", "sessionStatus"):
+        val = data.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return None
+
+
+def _wait_until_running(http, url, headers, session_id):
+    """Poll the session until it is Running (or a terminal failure / timeout)."""
+    interval = float(os.environ.get("DOMINO_WORKSPACE_POLL_INTERVAL_SECONDS", "10"))
+    timeout = float(os.environ.get("DOMINO_WORKSPACE_POLL_TIMEOUT_SECONDS", "240"))
+    ready_raw = os.environ.get("DOMINO_WORKSPACE_READY_STATUSES")
+    ready = {s.strip().lower() for s in ready_raw.split(",")} if ready_raw else set(DEFAULT_READY_STATUSES)
+
+    deadline = time.monotonic() + timeout
+    last_status = None
+    logger.info(f"[DEBUG] _wait_until_running: polling {url} every {interval:.0f}s up to {timeout:.0f}s (ready={sorted(ready)})")
+
+    while time.monotonic() < deadline:
+        try:
+            resp, _ = _request(http, "GET", url, headers, None)
+            status = _get_status(resp)
+            last_status = status
+            logger.info(f"Workspace session {session_id} status: {status} (http {resp.status})")
+            if status is not None and status.strip().lower() in ready:
+                logger.info(f"Workspace session {session_id} is READY.")
+                return True
+            if status is not None and status.strip().lower() in FAILED_STATUSES:
+                raise Exception(
+                    f"Workspace session {session_id} entered terminal state before ready: '{status}'"
+                )
+        except Exception as e:
+            if isinstance(e, urllib3.exceptions.HTTPError) or "timed out" in str(e).lower():
+                # transient poll error - keep polling until deadline
+                logger.info(f"[DEBUG] _wait_until_running: poll error (retrying): {type(e).__name__}: {e}")
+            else:
+                raise
+        time.sleep(interval)
+
+    raise Exception(
+        f"Workspace session {session_id} did not reach a ready state within {timeout:.0f}s "
+        f"(last status: {last_status})"
+    )
+
+
 def _cleanup(http, method, url, headers, action, project_id, workspace_id, started_id):
     id_field = "jobId" if action == "job" else "sessionId"
     body = {"projectId": project_id, id_field: started_id}
@@ -167,6 +239,7 @@ def main():
 
     prefix = f"DOMINO_{action.upper()}"
     start_path = os.environ.get(f"{prefix}_START_PATH", DEFAULT_PATHS[action]["start"])
+    status_path = os.environ.get(f"{prefix}_STATUS_PATH", DEFAULT_PATHS[action].get("status"))
     stop_path = os.environ.get(f"{prefix}_STOP_PATH", DEFAULT_PATHS[action]["stop"])
     stop_method = os.environ.get(f"{prefix}_STOP_METHOD", DEFAULT_PATHS[action]["stop_method"])
 
@@ -210,6 +283,13 @@ def main():
 
     started_id = _extract_id(resp)
     logger.info(f"Domino {action} started with id: {started_id}")
+
+    # Workspace: wait until the session is actually Running before we stop it,
+    # so the next scheduled run starts from a clean (stopped) workspace.
+    if action == "workspace" and status_path and started_id:
+        status_url = host + _render_path(status_path, project_id, workspace_id, started_id)
+        _wait_until_running(http, status_url, headers, started_id)
+        logger.info("Workspace confirmed running; proceeding to cleanup.")
 
     if os.environ.get("DOMINO_CLEANUP", "true").lower() == "true" and started_id:
         stop_url_final = host + _render_path(stop_path, project_id, workspace_id, started_id)
