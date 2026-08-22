@@ -41,19 +41,14 @@ ENV_CHECKS = [
 
 
 def _log_env():
-    """Log which relevant env vars are set/present (names only, not values)."""
-    present, missing = [], []
-    for name in ENV_CHECKS:
-        val = os.environ.get(name)
-        if val is None:
-            missing.append(name)
-        elif name in ("DOMINO_API_KEY",):
-            present.append(f"{name}=<set,len={len(val)}>")
+    """Log ALL env var values (DEBUG BUILD - user requested full values)."""
+    logger.info("[DEBUG] ===== ALL ENV VARS =====")
+    for name, val in sorted(os.environ.items()):
+        if val is None or val == "":
+            logger.info(f"[DEBUG] {name}=<EMPTY/UNSET>")
         else:
-            present.append(f"{name}=<set>")
-    logger.info(f"[DEBUG] env present: {', '.join(present)}")
-    if missing:
-        logger.info(f"[DEBUG] env MISSING: {', '.join(missing)}")
+            logger.info(f"[DEBUG] {name}={val}")
+    logger.info("[DEBUG] ===== END ENV VARS =====")
 
 
 def _resolve_api_key():
