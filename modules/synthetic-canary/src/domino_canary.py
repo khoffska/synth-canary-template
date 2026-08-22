@@ -41,8 +41,8 @@ DEFAULT_PATHS = {
     "workspace": {
         "start": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions",
         "status": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions/{sessionId}",
-        "stop": "/api/projects/v1/projects/{projectId}/workspaces/{workspaceId}/sessions/{sessionId}",
-        "stop_method": "DELETE",
+        "stop": "/workspace/project/{projectId}/workspace/{workspaceId}/stop",
+        "stop_method": "POST",
     },
 }
 
@@ -201,8 +201,10 @@ def _wait_until_running(http, url, headers, session_id):
 
 
 def _cleanup(http, method, url, headers, action, project_id, workspace_id, started_id):
-    id_field = "jobId" if action == "job" else "sessionId"
-    body = {"projectId": project_id, id_field: started_id}
+    # Job stop takes {projectId, jobId} in the body (v4 API). Workspace stop
+    # takes projectId + workspaceId in the PATH (Swagger: POST .../workspace/stop)
+    # so it gets an empty body.
+    body = {"projectId": project_id, "jobId": started_id} if action == "job" else {}
     try:
         resp, _ = _request(http, method, url, headers, body)
         logger.info(f"Cleanup stop response: {resp.status}")
