@@ -1,6 +1,5 @@
 import json
 import os
-import socket
 import time
 import traceback
 
@@ -11,9 +10,11 @@ from aws_synthetics.common import synthetics_logger as logger
 
 # Domino Data Lab API canary.
 #
-# DEBUG BUILD (2026-08-22): extra logging to find a 60s Lambda timeout.
-# Logs: env presence (names only, never secret values), SSM resolution,
-# DNS resolution, request timing, and full tracebacks.
+# DEBUG BUILD (2026-08-22): logs env presence (names only, never secret
+# values), SSM resolution, request timing, and full tracebacks. The raw
+# socket.getaddrinfo DNS check was REMOVED - the Synthetics runtime throws
+# OSError [Errno 16] Device or resource busy on direct socket DNS calls;
+# urllib3 resolves DNS internally within REQUEST_TIMEOUT instead.
 
 # Hard request timeouts so a stalled connection fails fast with a real error
 # instead of hanging until the Lambda timeout kills the canary mid-run.
@@ -41,14 +42,19 @@ ENV_CHECKS = [
 
 
 def _log_env():
-    """Log ALL env var values (DEBUG BUILD - user requested full values)."""
-    logger.info("[DEBUG] ===== ALL ENV VARS =====")
-    for name, val in sorted(os.environ.items()):
-        if val is None or val == "":
-            logger.info(f"[DEBUG] {name}=<EMPTY/UNSET>")
+    """Log which relevant env vars are set/present (names only, not values)."""
+    present, missing = [], []
+    for name in ENV_CHECKS:
+        val = os.environ.get(name)
+        if val is None:
+            missing.append(name)
+        elif name in ("DOMINO_API_KEY",):
+            present.append(f"{name}=<set,len={len(val)}>")
         else:
-            logger.info(f"[DEBUG] {name}={val}")
-    logger.info("[DEBUG] ===== END ENV VARS =====")
+            present.append(f"{name}=<set>")
+    logger.info(f"[DEBUG] env present: {', '.join(present)}")
+    if missing:
+        logger.info(f"[DEBUG] env MISSING: {', '.join(missing)}")
 
 
 def _resolve_api_key():
@@ -68,20 +74,6 @@ def _resolve_api_key():
         return value
     except Exception as e:
         logger.info(f"[DEBUG] _resolve_api_key: SSM get_parameter FAILED after {(time.monotonic()-start)*1000:.0f} ms: {type(e).__name__}: {e}")
-        raise
-
-
-def _resolve_host(host, port=443):
-    """Explicit DNS resolution check so we can see if resolution hangs or fails."""
-    logger.info(f"[DEBUG] _resolve_host: resolving '{host}' ...")
-    start = time.monotonic()
-    try:
-        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-        ips = sorted({i[4][0] for i in infos})
-        logger.info(f"[DEBUG] _resolve_host: resolved in {(time.monotonic()-start)*1000:.0f} ms -> {ips}")
-        return ips
-    except Exception as e:
-        logger.info(f"[DEBUG] _resolve_host: FAILED after {(time.monotonic()-start)*1000:.0f} ms: {type(e).__name__}: {e}")
         raise
 
 
@@ -156,7 +148,6 @@ def main():
         start_body["runCommand"] = os.environ.get("DOMINO_RUN_COMMAND", "main.py")
 
     logger.info(f"[DEBUG] main: action={action}, start_url={start_url}, stop_url={stop_url}")
-    _resolve_host(host)
 
     logger.info(f"Starting Domino {action} in project {project_id}")
     resp, latency_ms = _request(http, "POST", start_url, headers, start_body)
