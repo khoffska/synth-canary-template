@@ -33,6 +33,10 @@ DEFAULT_PATHS = {
     "workspace": {"start": "/v4/workspaces", "stop": "/v4/workspaces/stop"},
 }
 
+# Hard request timeouts so a stalled connection fails fast with a real error
+# instead of hanging until the Lambda timeout kills the canary mid-run.
+REQUEST_TIMEOUT = urllib3.Timeout(connect=5, read=15)
+
 
 def _resolve_api_key():
     """Prefer an SSM Parameter Store SecureString; fall back to a plaintext env var."""
@@ -49,7 +53,8 @@ def _resolve_api_key():
 def _request(http, method, url, headers, body):
     start = time.monotonic()
     resp = http.request(
-        method, url, headers=headers, body=None if body is None else json.dumps(body)
+        method, url, headers=headers, body=None if body is None else json.dumps(body),
+        timeout=REQUEST_TIMEOUT,
     )
     latency_ms = (time.monotonic() - start) * 1000
     return resp, latency_ms
