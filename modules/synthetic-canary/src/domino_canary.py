@@ -51,8 +51,15 @@ DEFAULT_PATHS = {
 # DOMINO_WORKSPACE_READY_STATUSES (comma-separated).
 DEFAULT_READY_STATUSES = ("running", "started", "ready", "active")
 
-# Terminal failure statuses - if the session lands here before Running, fail.
+# Terminal failure statuses. Split into two classes:
+# - HARD_FAIL: never a normal pre-start state -> always fatal immediately.
+# - SOFT_TERMINAL: can be STALE on the first poll(s) because the workspace-level
+#   status endpoint (/v4/workspace/project/...) reports the PREVIOUS session's
+#   state (e.g. "stopped" from the last run's cleanup) before the new session
+#   registers as starting. Only fatal once we've seen an alive state first.
 FAILED_STATUSES = ("failed", "error", "terminated", "stopped", "cancelled", "canceled")
+HARD_FAIL = ("failed", "error")
+SOFT_TERMINAL = ("stopped", "terminated", "cancelled", "canceled")
 
 # Env vars the canary reads - we log which are SET (never their values).
 ENV_CHECKS = [
@@ -187,6 +194,7 @@ def _wait_until_running(http, url, headers, session_id):
 
     deadline = time.monotonic() + timeout
     last_status = None
+    seen_alive = False
     logger.info(f"[DEBUG] _wait_until_running: polling {url} every {interval:.0f}s up to {timeout:.0f}s (ready={sorted(ready)})")
 
     while time.monotonic() < deadline:
@@ -194,14 +202,31 @@ def _wait_until_running(http, url, headers, session_id):
             resp, _ = _request(http, "GET", url, headers, None)
             status = _get_status(resp)
             last_status = status
+            norm = status.strip().lower() if status else ""
             logger.info(f"Workspace session {session_id} status: {status} (http {resp.status})")
-            if status is not None and status.strip().lower() in ready:
+            if norm in ready:
                 logger.info(f"Workspace session {session_id} is READY.")
                 return True
-            if status is not None and status.strip().lower() in FAILED_STATUSES:
+            if norm in HARD_FAIL:
                 raise Exception(
                     f"Workspace session {session_id} entered terminal state before ready: '{status}'"
                 )
+            if norm in SOFT_TERMINAL:
+                if seen_alive:
+                    # alive -> terminal transition: a real crash mid-start
+                    raise Exception(
+                        f"Workspace session {session_id} entered terminal state before ready: '{status}'"
+                    )
+                # Terminal on the first poll(s) = the workspace-level status endpoint
+                # is still reporting the PREVIOUS session's state (e.g. 'stopped'
+                # from the last run's cleanup) before the new session registers.
+                # Not a failure of THIS session - keep polling for it to flip.
+                logger.info(f"[DEBUG] terminal status '{status}' before any alive state - "
+                            "treating as stale pre-start state, continuing to poll")
+            else:
+                # any non-terminal, non-ready status (starting/queued/...) means the
+                # new session is registering
+                seen_alive = True
         except Exception as e:
             if isinstance(e, urllib3.exceptions.HTTPError) or "timed out" in str(e).lower():
                 # transient poll error - keep polling until deadline
@@ -304,14 +329,18 @@ def main():
 
     # Workspace: wait until the session is actually Running before we stop it,
     # so the next scheduled run starts from a clean (stopped) workspace.
-    if action == "workspace" and status_path and started_id:
-        status_url = host + _render_path(status_path, project_id, workspace_id, started_id)
-        _wait_until_running(http, status_url, headers, started_id)
-        logger.info("Workspace confirmed running; proceeding to cleanup.")
-
-    if os.environ.get("DOMINO_CLEANUP", "true").lower() == "true" and started_id:
-        stop_url_final = host + _render_path(stop_path, project_id, workspace_id, started_id)
-        _cleanup(http, stop_method, stop_url_final, headers, action, project_id, workspace_id, started_id)
+    # try/finally: even if the wait fails (or start returned a bad id), ALWAYS
+    # attempt cleanup so a failed run doesn't leak a running session - leaked
+    # sessions are what made this canary alternate pass/fail (see git history).
+    try:
+        if action == "workspace" and status_path and started_id:
+            status_url = host + _render_path(status_path, project_id, workspace_id, started_id)
+            _wait_until_running(http, status_url, headers, started_id)
+            logger.info("Workspace confirmed running; proceeding to cleanup.")
+    finally:
+        if os.environ.get("DOMINO_CLEANUP", "true").lower() == "true" and started_id:
+            stop_url_final = host + _render_path(stop_path, project_id, workspace_id, started_id)
+            _cleanup(http, stop_method, stop_url_final, headers, action, project_id, workspace_id, started_id)
 
     logger.info("Domino canary successfully executed.")
 
