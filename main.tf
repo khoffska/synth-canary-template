@@ -10,6 +10,7 @@ module "canary" {
 
   schedule_expression = var.schedule_expression
   runtime_version     = var.runtime_version
+  timeout_in_seconds  = var.timeout_in_seconds
 
   # Optional overrides:
   # source_file          = "${path.module}/src/my-canary.py"  # point at your own .py anywhere

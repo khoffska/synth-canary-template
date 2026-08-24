@@ -26,6 +26,12 @@ variable "runtime_version" {
   default     = "syn-python-selenium-11.1"
 }
 
+variable "timeout_in_seconds" {
+  type        = number
+  description = "Canary execution timeout in seconds. AWS caps this at 300s for canaries on a <=5-minute schedule (the default rate(5 minutes)); domino workspace canaries on a rate(1 hour) schedule need 600 (poll timeout 240s + start time)."
+  default     = 300
+}
+
 variable "domino_parameter_name" {
   type        = string
   description = "Name of the SSM Parameter Store parameter holding the Domino API key (created by secrets.tf with a placeholder value)."
