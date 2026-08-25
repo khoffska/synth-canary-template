@@ -32,6 +32,16 @@ variable "timeout_in_seconds" {
   default     = 300
 }
 
+variable "environment" {
+  type        = string
+  description = "Deployment environment. Selects the domino config from local.domino_envs (prod/stage)."
+
+  validation {
+    condition     = contains(["prod", "stage"], var.environment)
+    error_message = "environment must be \"prod\" or \"stage\" (add your env to local.domino_envs in main.tf first)."
+  }
+}
+
 variable "domino_parameter_name" {
   type        = string
   description = "Name of the SSM Parameter Store parameter holding the Domino API key (created by secrets.tf with a placeholder value)."
